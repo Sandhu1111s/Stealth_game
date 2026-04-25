@@ -18,7 +18,7 @@ class Guard:
       - Red:    player confirmed, guard chases and catches player
     """
 
-    def __init__(self, x, y, patrol_points, vision_radius=80, speed=2, vision_angle=120):
+    def __init__(self, x, y, patrol_points, vision_radius=80, speed=2, vision_angle=120, wall_manager=None):
         """
         Args:
             x, y: Starting position of the guard.
@@ -39,10 +39,13 @@ class Guard:
         self.vision_angle = vision_angle  # Total cone angle in degrees
         self.facing_angle = 0.0          # Angle the guard is facing (radians, 0 = right)
 
+        # Reference to walls for collision and line-of-sight
+        self.wall_manager = wall_manager
+
         # Detection state
         self.state = STATE_PATROL
         self.suspicion_timer = 0.0          # Time spent suspicious (seconds)
-        self.suspicion_threshold = 1      # Seconds before going alert
+        self.suspicion_threshold = 0.5      # Seconds before going alert
         self.player_was_in_vision = False    # Track if player left vision during suspicion
 
         # Guard visual size
@@ -96,6 +99,14 @@ class Guard:
 
         return abs(diff) <= half_cone
 
+    def _vision_blocked_by_wall(self, player_rect):
+        """Check if a wall blocks line-of-sight to the player."""
+        if self.wall_manager is None:
+            return False  # No walls to block
+        return not self.wall_manager.line_of_sight_clear(
+            self.x, self.y, player_rect.centerx, player_rect.centery
+        )
+
     def _move_toward(self, tx, ty, spd):
         """Move the guard toward target (tx, ty) at the given speed."""
         dx = tx - self.x
@@ -110,6 +121,16 @@ class Guard:
             return True  # Arrived
         self.x += (dx / dist) * spd
         self.y += (dy / dist) * spd
+
+        # Wall collision — revert if guard walked into a wall
+        if self.wall_manager is not None:
+            old_x_saved = self.x - (dx / dist) * spd
+            old_y_saved = self.y - (dy / dist) * spd
+            self.x, self.y = self.wall_manager.clamp_entity_movement(
+                old_x_saved, old_y_saved, self.x, self.y,
+                self.width, self.height
+            )
+
         return False
 
     # ------------------------------------------------------------------
@@ -126,7 +147,10 @@ class Guard:
         Returns:
             True if the guard has caught the player (game over).
         """
-        player_visible = self._player_in_vision(player_rect)
+        player_visible = (
+            self._player_in_vision(player_rect)
+            and not self._vision_blocked_by_wall(player_rect)
+        )
 
         # ---- STATE: PATROL ----
         if self.state == STATE_PATROL:
@@ -271,11 +295,12 @@ class GuardManager:
     when any guard catches the player.
     """
 
-    def __init__(self, screen_width, screen_height):
+    def __init__(self, screen_width, screen_height, wall_manager=None):
         self.guards = []
         self.game_over = False
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.wall_manager = wall_manager
 
         # Restart button rect (will be drawn in the game-over overlay)
         btn_w, btn_h = 200, 50
@@ -333,8 +358,29 @@ class GuardManager:
                 cfg["patrol"],
                 vision_radius=cfg["radius"],
                 speed=cfg["speed"],
+                wall_manager=self.wall_manager,
             )
             self.add_guard(g)
+
+    def create_guards_from_level(self, guard_configs):
+        """
+        Create guards from a level's predefined guard configs.
+
+        Args:
+            guard_configs: List of dicts with keys:
+                "start", "patrol", "radius", "speed"
+        """
+        for cfg in guard_configs:
+            g = Guard(
+                cfg["start"][0],
+                cfg["start"][1],
+                cfg["patrol"],
+                vision_radius=cfg["radius"],
+                speed=cfg["speed"],
+                wall_manager=self.wall_manager,
+            )
+            self.add_guard(g)
+
 
     def reset(self):
         """Reset all guards to patrol state and back to start positions."""
