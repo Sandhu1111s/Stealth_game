@@ -18,7 +18,7 @@ class Guard:
       - Red:    player confirmed, guard chases and catches player
     """
 
-    def __init__(self, x, y, patrol_points, vision_radius=80, speed=2, vision_angle=120, wall_manager=None):
+    def __init__(self, x, y, patrol_points, vision_radius=120, speed=2, vision_angle=140, wall_manager=None):
         """
         Args:
             x, y: Starting position of the guard.
@@ -45,7 +45,7 @@ class Guard:
         # Detection state
         self.state = STATE_PATROL
         self.suspicion_timer = 0.0          # Time spent suspicious (seconds)
-        self.suspicion_threshold = 0.5      # Seconds before going alert
+        self.suspicion_threshold = 0.2     # Seconds before going alert
         self.player_was_in_vision = False    # Track if player left vision during suspicion
 
         # Guard visual size
