@@ -42,7 +42,7 @@ class Guard:
         # Detection state
         self.state = STATE_PATROL
         self.suspicion_timer = 0.0          # Time spent suspicious (seconds)
-        self.suspicion_threshold = 1.5      # Seconds before going alert
+        self.suspicion_threshold = 1      # Seconds before going alert
         self.player_was_in_vision = False    # Track if player left vision during suspicion
 
         # Guard visual size
