@@ -1,6 +1,7 @@
 from tkinter import font
 
 import pygame
+from Gaurd import GuardManager
 
 pygame.init()
 pygame.mixer.init()
@@ -18,16 +19,24 @@ MENU = 0
 GAME = 1
 state = MENU
 
+# Player setup
+player_x, player_y = 100, 500
+player_speed = 4
+player_size = 30
+
+# Guard system
+guard_manager = GuardManager(WIDTH, HEIGHT)
+guard_manager.create_default_guards()
+
 running = True
 clock = pygame.time.Clock()
 
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
-         running = False
+            running = False
 
-
-         if state == MENU:
+        if state == MENU:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN:
                     state = GAME
@@ -37,7 +46,13 @@ while running:
                 if new_game_rect.collidepoint(event.pos):
                     state = GAME 
                 if quit_rect.collidepoint(event.pos):
-                    running = False   
+                    running = False
+
+        if state == GAME:
+            if guard_manager.handle_event(event):
+                # Restart the game
+                player_x, player_y = 100, 500
+                guard_manager.reset()
     
 
         
@@ -78,8 +93,35 @@ while running:
         screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2 + 150))
        
     elif state == GAME:
-        pygame.draw.rect(screen, (0,255,0), (100,100,50,50))
         pygame.mixer.music.stop()
+        dt = clock.get_time() / 1000.0  # Delta time in seconds
+
+        # --- Player movement (WASD or arrow keys) ---
+        if not guard_manager.game_over:
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                player_x -= player_speed
+            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                player_x += player_speed
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                player_y -= player_speed
+            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                player_y += player_speed
+
+            # Keep player on screen
+            player_x = max(0, min(player_x, WIDTH - player_size))
+            player_y = max(0, min(player_y, HEIGHT - player_size))
+
+        player_rect = pygame.Rect(player_x, player_y, player_size, player_size)
+
+        # --- Update guards ---
+        guard_manager.update(player_rect, dt)
+
+        # --- Draw everything ---
+        screen.fill((20, 20, 40))                              # Dark game background
+        guard_manager.draw(screen)                              # Guards + vision circles
+        pygame.draw.rect(screen, (0, 200, 255), player_rect)   # Player (cyan)
+        guard_manager.draw_game_over(screen)                    # Game over overlay
     pygame.display.update()
     clock.tick(60)
 
