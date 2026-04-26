@@ -3,9 +3,9 @@ import math
 import random
 
 # Guard states
-STATE_PATROL = "patrol"         # Green vision - normal patrol
-STATE_SUSPICIOUS = "suspicious" # Yellow vision - player detected, confirming
-STATE_ALERT = "alert"           # Red vision - confirmed, chasing player
+STATE_PATROL = "patrol"        
+STATE_SUSPICIOUS = "suspicious" 
+STATE_ALERT = "alert"           
 
 
 class Guard:
@@ -18,7 +18,7 @@ class Guard:
       - Red:    player confirmed, guard chases and catches player
     """
 
-    def __init__(self, x, y, patrol_points, vision_radius=120, speed=2, vision_angle=140, wall_manager=None):
+    def __init__(self, x, y, patrol_points, vision_radius=120, speed=2, vision_angle=160, wall_manager=None):
         """
         Args:
             x, y: Starting position of the guard.
@@ -33,7 +33,7 @@ class Guard:
         self.current_patrol_index = 0
         self.vision_radius = vision_radius
         self.speed = speed
-        self.chase_speed = speed * 2.5  # Faster when chasing
+        self.chase_speed = speed * 1.2  # Faster when chasing
 
         # Vision cone settings
         self.vision_angle = vision_angle  # Total cone angle in degrees
@@ -45,8 +45,11 @@ class Guard:
         # Detection state
         self.state = STATE_PATROL
         self.suspicion_timer = 0.0          # Time spent suspicious (seconds)
-        self.suspicion_threshold = 0.2     # Seconds before going alert
+        self.suspicion_threshold = 0.1      # Seconds before going alert
         self.player_was_in_vision = False    # Track if player left vision during suspicion
+        self.last_move_blocked = False
+        self.blocked_time = 0.0
+        self.blocked_threshold = 0.6  # Seconds stuck before switching patrol point
 
         # Guard visual size
         self.width = 20
@@ -112,13 +115,21 @@ class Guard:
         dx = tx - self.x
         dy = ty - self.y
         dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist <= 0.0001:
+            self.last_move_blocked = False
+            return True
+
         if dist > 0.1:
             # Update facing angle to match movement direction
             self.facing_angle = math.atan2(dy, dx)
         if dist < spd:
             self.x = float(tx)
             self.y = float(ty)
+            self.last_move_blocked = False
             return True  # Arrived
+
+        before_x, before_y = self.x, self.y
         self.x += (dx / dist) * spd
         self.y += (dy / dist) * spd
 
@@ -130,6 +141,9 @@ class Guard:
                 old_x_saved, old_y_saved, self.x, self.y,
                 self.width, self.height
             )
+
+        moved_dist = math.sqrt((self.x - before_x) ** 2 + (self.y - before_y) ** 2)
+        self.last_move_blocked = moved_dist < 0.05
 
         return False
 
@@ -161,12 +175,24 @@ class Guard:
                 self.current_patrol_index = (
                     (self.current_patrol_index + 1) % len(self.patrol_points)
                 )
+                self.blocked_time = 0.0
+            elif self.last_move_blocked:
+                self.blocked_time += dt
+                if self.blocked_time >= self.blocked_threshold:
+                    # If this point is blocked by walls, continue patrol.
+                    self.current_patrol_index = (
+                        (self.current_patrol_index + 1) % len(self.patrol_points)
+                    )
+                    self.blocked_time = 0.0
+            else:
+                self.blocked_time = 0.0
 
             # If player enters vision → become suspicious
             if player_visible:
                 self.state = STATE_SUSPICIOUS
                 self.suspicion_timer = 0.0
                 self.player_was_in_vision = True
+                self.blocked_time = 0.0
 
         # ---- STATE: SUSPICIOUS ----
         elif self.state == STATE_SUSPICIOUS:
@@ -194,6 +220,7 @@ class Guard:
             player_cx = player_rect.centerx
             player_cy = player_rect.centery
             self._move_toward(player_cx, player_cy, self.chase_speed)
+            self.blocked_time = 0.0
 
             # Check if guard caught the player (rects overlap)
             if self.get_rect().colliderect(player_rect):
@@ -389,6 +416,8 @@ class GuardManager:
             g.state = STATE_PATROL
             g.suspicion_timer = 0.0
             g.current_patrol_index = 0
+            g.last_move_blocked = False
+            g.blocked_time = 0.0
             if g.patrol_points:
                 g.x = float(g.patrol_points[0][0])
                 g.y = float(g.patrol_points[0][1])
