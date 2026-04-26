@@ -3,9 +3,8 @@ import math
 import random
 
 
-# ======================================================================
-# Wall — a single rectangular wall segment
-# ======================================================================
+
+
 
 class Wall:
     """A single rectangular wall with visual styling."""
@@ -55,24 +54,10 @@ class Wall:
         pygame.draw.rect(surface, self.border_color, self.rect, 1)
 
 
-# ======================================================================
-# LEVEL DEFINITIONS
-# ======================================================================
-# Each level is a dict with:
-#   "name"         : Display name of the level
-#   "player_spawn" : (x, y) starting position
-#   "walls"        : list of (x, y, width, height) tuples
-#   "guards"       : list of guard configs with start, patrol, radius, speed
-#
-# Map size is 800 x 600. Wall thickness is typically 20px.
-# ======================================================================
 
 LEVELS = {
 
-    # ------------------------------------------------------------------
-    # LEVEL 1 — Training Ground (Easy)
-    # Simple rooms with wide corridors, 3 slow guards
-    # ------------------------------------------------------------------
+
     1: {
         "name": "Training Ground",
         "player_spawn": (60, 540),
@@ -125,10 +110,7 @@ LEVELS = {
         ],
     },
 
-    # ------------------------------------------------------------------
-    # LEVEL 2 — The Compound (Medium)
-    # More walls, tighter corridors, 4 guards
-    # ------------------------------------------------------------------
+  
     2: {
         "name": "The Compound",
         "player_spawn": (60, 540),
@@ -188,10 +170,7 @@ LEVELS = {
         ],
     },
 
-    # ------------------------------------------------------------------
-    # LEVEL 3 — High Security (Hard)
-    # Tight corridors, many walls, 5 faster guards with bigger vision
-    # ------------------------------------------------------------------
+  
     3: {
         "name": "High Security",
         "player_spawn": (40, 560),
@@ -269,9 +248,7 @@ LEVELS = {
 TOTAL_LEVELS = len(LEVELS)
 
 
-# ======================================================================
-# WallManager — loads and manages level-based walls
-# ======================================================================
+
 
 class WallManager:
     """
@@ -395,9 +372,7 @@ class WallManager:
 
         return new_x, new_y
 
-    # ------------------------------------------------------------------
-    # Line-of-sight (for guard vision)
-    # ------------------------------------------------------------------
+  
     def line_of_sight_clear(self, x1, y1, x2, y2):
         """
         Check if a straight line from (x1,y1) to (x2,y2) is clear of walls.
@@ -428,9 +403,6 @@ class WallManager:
                     return False  # Blocked by wall
         return True
 
-    # ------------------------------------------------------------------
-    # Drawing
-    # ------------------------------------------------------------------
     def draw(self, surface):
         """Draw all walls onto the surface."""
         for wall in self.walls:
