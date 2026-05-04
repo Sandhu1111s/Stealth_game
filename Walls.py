@@ -3,11 +3,15 @@ import math
 import random
 
 
-
-
+# ======================================================================
+# Wall — a single rectangular wall segment
+# ======================================================================
 
 class Wall:
-    """A single rectangular wall with visual styling."""
+    """A single rectangular wall with visual styling and optional texture."""
+
+    # Class-level shared texture (set once, used by all walls)
+    _shared_texture = None
 
     def __init__(self, x, y, width, height):
         self.rect = pygame.Rect(x, y, width, height)
@@ -15,49 +19,94 @@ class Wall:
         base = random.randint(40, 70)
         self.color = (base, base + 10, base + 30)
         self.border_color = (100, 120, 160)
+        # Per-wall texture override (optional)
+        self.texture = None
+
+    @classmethod
+    def set_shared_texture(cls, texture_surface):
+        """
+        Set a texture image that ALL walls will use.
+
+        Args:
+            texture_surface: A pygame.Surface to tile across walls.
+        """
+        cls._shared_texture = texture_surface
+
+    def _get_texture(self):
+        """Return the texture to use (per-wall override or shared)."""
+        return self.texture if self.texture is not None else Wall._shared_texture
 
     def draw(self, surface):
-        """Draw the wall with a subtle 3D-ish look."""
-        # Main fill
-        pygame.draw.rect(surface, self.color, self.rect)
-        # Highlight on top/left edges
-        pygame.draw.line(
-            surface,
-            (self.color[0] + 40, self.color[1] + 40, self.color[2] + 40),
-            self.rect.topleft,
-            self.rect.topright,
-            2,
-        )
-        pygame.draw.line(
-            surface,
-            (self.color[0] + 30, self.color[1] + 30, self.color[2] + 30),
-            self.rect.topleft,
-            self.rect.bottomleft,
-            2,
-        )
-        # Shadow on bottom/right edges
-        pygame.draw.line(
-            surface,
-            (max(self.color[0] - 20, 0), max(self.color[1] - 10, 0), max(self.color[2] - 10, 0)),
-            self.rect.bottomleft,
-            self.rect.bottomright,
-            2,
-        )
-        pygame.draw.line(
-            surface,
-            (max(self.color[0] - 20, 0), max(self.color[1] - 10, 0), max(self.color[2] - 10, 0)),
-            self.rect.topright,
-            self.rect.bottomright,
-            2,
-        )
-        # Outer border
-        pygame.draw.rect(surface, self.border_color, self.rect, 1)
+        """Draw the wall with texture (if available) or the default 3D look."""
+        tex = self._get_texture()
+        if tex is not None:
+            # Tile the texture across the wall rectangle
+            tw, th = tex.get_width(), tex.get_height()
+            for ty in range(self.rect.top, self.rect.bottom, th):
+                for tx in range(self.rect.left, self.rect.right, tw):
+                    # Clip to wall bounds
+                    clip_w = min(tw, self.rect.right - tx)
+                    clip_h = min(th, self.rect.bottom - ty)
+                    area = pygame.Rect(0, 0, clip_w, clip_h)
+                    surface.blit(tex, (tx, ty), area)
+            # Border on top of texture
+            pygame.draw.rect(surface, self.border_color, self.rect, 1)
+        else:
+            # Default procedural look
+            # Main fill
+            pygame.draw.rect(surface, self.color, self.rect)
+            # Highlight on top/left edges
+            pygame.draw.line(
+                surface,
+                (self.color[0] + 40, self.color[1] + 40, self.color[2] + 40),
+                self.rect.topleft,
+                self.rect.topright,
+                2,
+            )
+            pygame.draw.line(
+                surface,
+                (self.color[0] + 30, self.color[1] + 30, self.color[2] + 30),
+                self.rect.topleft,
+                self.rect.bottomleft,
+                2,
+            )
+            # Shadow on bottom/right edges
+            pygame.draw.line(
+                surface,
+                (max(self.color[0] - 20, 0), max(self.color[1] - 10, 0), max(self.color[2] - 10, 0)),
+                self.rect.bottomleft,
+                self.rect.bottomright,
+                2,
+            )
+            pygame.draw.line(
+                surface,
+                (max(self.color[0] - 20, 0), max(self.color[1] - 10, 0), max(self.color[2] - 10, 0)),
+                self.rect.topright,
+                self.rect.bottomright,
+                2,
+            )
+            # Outer border
+            pygame.draw.rect(surface, self.border_color, self.rect, 1)
 
 
+# ======================================================================
+# LEVEL DEFINITIONS
+# ======================================================================
+# Each level is a dict with:
+#   "name"         : Display name of the level
+#   "player_spawn" : (x, y) starting position
+#   "walls"        : list of (x, y, width, height) tuples
+#   "guards"       : list of guard configs with start, patrol, radius, speed
+#
+# Map size is 800 x 600. Wall thickness is typically 20px.
+# ======================================================================
 
 LEVELS = {
 
-
+    # ------------------------------------------------------------------
+    # LEVEL 1 — Training Ground (Easy)
+    # Simple rooms with wide corridors, 3 slow guards
+    # ------------------------------------------------------------------
     1: {
         "name": "Training Ground",
         "player_spawn": (60, 540),
@@ -86,31 +135,34 @@ LEVELS = {
             (340, 500, 60, 20),
         ],
         "guards": [
-            # Guard 1 — patrols the top corridor left-right
+            # Guard 1 — patrols the top corridor left-right (above top barrier)
             {
                 "start": (280, 60),
-                "patrol": [(200, 60), (540, 60)],
+                "patrol": [(60, 60), (540, 60)],
                 "radius": 85,
                 "speed": 1.5,
             },
-            # Guard 2 — patrols right side up-down
+            # Guard 2 — patrols right side up-down (right of right vertical wall)
             {
                 "start": (700, 200),
-                "patrol": [(700, 150), (700, 430)],
+                "patrol": [(700, 60), (700, 440)],
                 "radius": 80,
                 "speed": 1.4,
             },
-            # Guard 3 — patrols below the center corridor wall
+            # Guard 3 — patrols open area below center corridor wall
             {
                 "start": (300, 420),
-                "patrol": [(220, 400), (270, 400), (270, 440), (220, 440)],
+                "patrol": [(60, 420), (460, 420)],
                 "radius": 75,
                 "speed": 1.3,
             },
         ],
     },
 
-  
+    # ------------------------------------------------------------------
+    # LEVEL 2 — The Compound (Medium)
+    # More walls, tighter corridors, 4 guards
+    # ------------------------------------------------------------------
     2: {
         "name": "The Compound",
         "player_spawn": (60, 540),
@@ -139,38 +191,41 @@ LEVELS = {
             (300, 380, 20, 80),      # small vertical cover center
         ],
         "guards": [
-            # Guard 1 — patrols inside top-left room
+            # Guard 1 — patrols inside top-left room (clear of walls at 120-320 x, 80-260 y)
             {
                 "start": (220, 160),
-                "patrol": [(160, 120), (300, 120), (300, 220), (160, 220)],
+                "patrol": [(160, 120), (300, 120), (300, 180), (160, 180)],
                 "radius": 80,
                 "speed": 1.6,
             },
-            # Guard 2 — patrols inside top-right room
+            # Guard 2 — patrols inside top-right room (clear of walls at 460-740 x, 80-260 y)
             {
                 "start": (600, 160),
-                "patrol": [(500, 120), (700, 120), (700, 220), (500, 220)],
+                "patrol": [(500, 120), (720, 120), (720, 240), (500, 240)],
                 "radius": 85,
                 "speed": 1.5,
             },
-            # Guard 3 — patrols center-bottom corridor (avoids center dividers)
+            # Guard 3 — patrols open corridor between center and bottom walls
             {
-                "start": (440, 420),
-                "patrol": [(240, 420), (440, 420), (440, 440), (240, 440)],
+                "start": (440, 430),
+                "patrol": [(60, 430), (440, 430)],
                 "radius": 75,
                 "speed": 1.8,
             },
-            # Guard 4 — patrols bottom area
+            # Guard 4 — patrols bottom-right area (below bottom-right barrier)
             {
                 "start": (650, 520),
-                "patrol": [(600, 500), (750, 500), (750, 560), (600, 560)],
+                "patrol": [(580, 500), (750, 500), (750, 570), (580, 570)],
                 "radius": 80,
                 "speed": 1.7,
             },
         ],
     },
 
-  
+    # ------------------------------------------------------------------
+    # LEVEL 3 — High Security (Hard)
+    # Tight corridors, many walls, 5 faster guards with bigger vision
+    # ------------------------------------------------------------------
     3: {
         "name": "High Security",
         "player_spawn": (40, 560),
@@ -205,37 +260,37 @@ LEVELS = {
             (660, 300, 60, 20),      # cover 3
         ],
         "guards": [
-            # Guard 1 — patrols top corridor
+            # Guard 1 — patrols top corridor (above top inner wall at y=60)
             {
-                "start": (500, 40),
-                "patrol": [(120, 40), (700, 40)],
+                "start": (500, 35),
+                "patrol": [(40, 35), (750, 35)],
                 "radius": 90,
                 "speed": 2.0,
             },
-            # Guard 2 — patrols left interior room
+            # Guard 2 — patrols left border corridor (left of inner wall at x=80)
             {
-                "start": (140, 240),
-                "patrol": [(120, 100), (120, 300)],
+                "start": (40, 240),
+                "patrol": [(40, 80), (40, 520)],
                 "radius": 85,
                 "speed": 1.8,
             },
-            # Guard 3 — patrols right interior room (avoids room connector)
+            # Guard 3 — patrols right interior room (between dividers 460-620 x)
             {
-                "start": (600, 170),
-                "patrol": [(500, 170), (600, 170), (600, 190), (500, 190)],
+                "start": (540, 170),
+                "patrol": [(490, 170), (600, 170), (600, 190), (490, 190)],
                 "radius": 80,
                 "speed": 2.0,
             },
-            # Guard 4 — patrols center area
+            # Guard 4 — patrols center-bottom open area
             {
-                "start": (340, 400),
-                "patrol": [(240, 360), (380, 360), (380, 500), (240, 500)],
+                "start": (300, 380),
+                "patrol": [(220, 360), (380, 360), (380, 400), (220, 400)],
                 "radius": 85,
                 "speed": 1.9,
             },
-            # Guard 5 — patrols bottom-right
+            # Guard 5 — patrols bottom-right room (between 520-720 x, 420-540 y)
             {
-                "start": (650, 480),
+                "start": (650, 460),
                 "patrol": [(560, 440), (700, 440), (700, 520), (560, 520)],
                 "radius": 90,
                 "speed": 2.2,
@@ -248,7 +303,9 @@ LEVELS = {
 TOTAL_LEVELS = len(LEVELS)
 
 
-
+# ======================================================================
+# WallManager — loads and manages level-based walls
+# ======================================================================
 
 class WallManager:
     """
@@ -372,7 +429,9 @@ class WallManager:
 
         return new_x, new_y
 
-  
+    # ------------------------------------------------------------------
+    # Line-of-sight (for guard vision)
+    # ------------------------------------------------------------------
     def line_of_sight_clear(self, x1, y1, x2, y2):
         """
         Check if a straight line from (x1,y1) to (x2,y2) is clear of walls.
@@ -403,10 +462,26 @@ class WallManager:
                     return False  # Blocked by wall
         return True
 
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
     def draw(self, surface):
         """Draw all walls onto the surface."""
         for wall in self.walls:
             wall.draw(surface)
+
+    def set_wall_texture(self, texture_path):
+        """
+        Load a texture image and apply it to all walls.
+
+        Args:
+            texture_path: Path to the texture image file.
+        """
+        try:
+            tex = pygame.image.load(texture_path).convert()
+            Wall.set_shared_texture(tex)
+        except Exception as e:
+            print(f"Warning: Could not load wall texture '{texture_path}': {e}")
 
     def draw_level_name(self, surface):
         """Draw the current level name in the top-left corner."""
