@@ -1,8 +1,9 @@
 from tkinter import font
 import math
+import os
 
 import pygame
-from Gaurd import GuardManager
+from Gaurd import GuardManager, Guard
 from Walls import WallManager, TOTAL_LEVELS
 
 pygame.init()
@@ -10,12 +11,8 @@ pygame.mixer.init()
 WIDTH , HEIGHT = 800, 600
 bg = pygame.image.load("newbg/new.jpg")
 bg = pygame.transform.scale(bg, (WIDTH, HEIGHT))
-menu_music_loaded = False
-try:
-    pygame.mixer.music.load("assests/mu.mp3")
-    menu_music_loaded = True
-except Exception:
-    menu_music_loaded = False
+pygame.mixer.music.load("assests/mu.mp3")
+pygame.mixer.music.play(-1)
 
 
 
@@ -34,15 +31,12 @@ player_speed = 4
 player_size = 30
 
 # Objective state
-OBJ_WAITING = 0     
-OBJ_PICKED = 1     
-OBJ_COMPLETE = 2      
+OBJ_WAITING = 0      # Objective is sitting at its location, waiting to be picked up
+OBJ_PICKED = 1        # Player picked it up, must return to spawn
+OBJ_COMPLETE = 2      # Player returned to spawn — level complete!
 objective_state = OBJ_WAITING
 objective_size = 20
 objective_pulse = 0.0  # For glowing animation
-RETURN_TIME_LIMIT = 15.0
-RETURN_WARNING_TIME = 5.0
-return_time_left = 0.0
 
 # Level complete buttons
 btn_w, btn_h = 180, 45
@@ -55,15 +49,34 @@ btn_menu_rect = pygame.Rect(WIDTH // 2 - btn_w // 2, HEIGHT // 2 + 50 + 2 * (btn
 wall_manager = WallManager(WIDTH, HEIGHT)
 guard_manager = GuardManager(WIDTH, HEIGHT, wall_manager=wall_manager)
 
+# --- Load textures ---
+TEXTURE_DIR = "textures"
+if os.path.isdir(TEXTURE_DIR):
+    wall_tex = os.path.join(TEXTURE_DIR, "wall.png")
+    guard_tex = os.path.join(TEXTURE_DIR, "guard.png")
+    player_tex_path = os.path.join(TEXTURE_DIR, "player.png")
+    if os.path.isfile(wall_tex):
+        wall_manager.set_wall_texture(wall_tex)
+    if os.path.isfile(guard_tex):
+        Guard.set_texture(guard_tex)
+    if os.path.isfile(player_tex_path):
+        player_texture = pygame.image.load(player_tex_path).convert_alpha()
+    else:
+        player_texture = None
+else:
+    player_texture = None
+
+# Player facing direction (for texture rotation)
+player_facing_angle = 0.0
+
 
 def load_level(level_num):
     """Load a level — sets up walls, guards, player spawn, and objective."""
-    global player_x, player_y, guard_manager, objective_state, return_time_left
+    global player_x, player_y, guard_manager, objective_state
 
     guard_configs = wall_manager.load_level(level_num)
     player_x, player_y = wall_manager.player_spawn
     objective_state = OBJ_WAITING
-    return_time_left = 0.0
 
     guard_manager = GuardManager(WIDTH, HEIGHT, wall_manager=wall_manager)
     guard_manager.create_guards_from_level(guard_configs)
@@ -116,8 +129,9 @@ while running:
 
     screen.fill((1,3,45))
     if state == MENU:
-        if menu_music_loaded and not pygame.mixer.music.get_busy():
+        if not pygame.mixer.music.get_busy():
             pygame.mixer.music.play(-1)
+
         screen.blit(bg, (0, 0))
 
         menu_font = pygame.font.Font("title/my2.otf", 40)  
@@ -149,63 +163,63 @@ while running:
         screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2 + 150))
        
     elif state == GAME:
-        if menu_music_loaded and pygame.mixer.music.get_busy():
-            pygame.mixer.music.stop()
-        dt = clock.get_time() / 1000.0  
-        objective_pulse += dt * 3 
+        pygame.mixer.music.stop()
+        dt = clock.get_time() / 1000.0  # Delta time in seconds
+        objective_pulse += dt * 3  # Animate the objective glow
 
-     
+        # --- Player movement (WASD or arrow keys) ---
         if not guard_manager.game_over and objective_state != OBJ_COMPLETE:
             keys = pygame.key.get_pressed()
-            old_px, old_py = player_x, player_y  
+            old_px, old_py = player_x, player_y  # Save for wall collision
+            dx, dy = 0, 0
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:
                 player_x -= player_speed
+                dx -= 1
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
                 player_x += player_speed
+                dx += 1
             if keys[pygame.K_UP] or keys[pygame.K_w]:
                 player_y -= player_speed
+                dy -= 1
             if keys[pygame.K_DOWN] or keys[pygame.K_s]:
                 player_y += player_speed
+                dy += 1
 
+            # Update player facing angle when moving
+            if dx != 0 or dy != 0:
+                player_facing_angle = math.atan2(dy, dx)
+
+            # Keep player on screen
             player_x = max(0, min(player_x, WIDTH - player_size))
             player_y = max(0, min(player_y, HEIGHT - player_size))
 
+            # Wall collision — slide along walls instead of stopping
             player_x, player_y = wall_manager.clamp_player_movement(
                 old_px, old_py, player_x, player_y, player_size
             )
 
         player_rect = pygame.Rect(player_x, player_y, player_size, player_size)
 
-      
+        # --- Objective logic ---
         obj_x, obj_y = wall_manager.objective_pos
         spawn_x, spawn_y = wall_manager.player_spawn
 
         if objective_state == OBJ_WAITING:
-            
+            # Check if player reached the objective
             obj_rect = pygame.Rect(
                 obj_x - objective_size // 2, obj_y - objective_size // 2,
                 objective_size, objective_size
             )
             if player_rect.colliderect(obj_rect):
                 objective_state = OBJ_PICKED
-                return_time_left = RETURN_TIME_LIMIT
 
         elif objective_state == OBJ_PICKED:
-            return_time_left -= dt
-
-            if return_time_left <= 0:
-                # Timer expired: trigger game over.
-                guard_manager.game_over = True
-                return_time_left = 0.0
-
-            if not guard_manager.game_over:
-                # Check if player returned to spawn
-                spawn_rect = pygame.Rect(
-                    spawn_x - 20, spawn_y - 20, 40, 40
-                )
-                if player_rect.colliderect(spawn_rect):
-                    objective_state = OBJ_COMPLETE
-                    return_time_left = 0.0
+            # Check if player returned to spawn
+            spawn_rect = pygame.Rect(
+                spawn_x - 20, spawn_y - 20, 40, 40
+            )
+            if player_rect.colliderect(spawn_rect):
+                objective_state = OBJ_COMPLETE
 
         # --- Update guards (only if level not complete) ---
         if objective_state != OBJ_COMPLETE:
@@ -266,7 +280,24 @@ while running:
             pygame.draw.polygon(screen, (255, 215, 0), mini_diamond)
 
         guard_manager.draw(screen)                              # Guards + vision cones
-        pygame.draw.rect(screen, (0, 200, 255), player_rect)   # Player (cyan)
+
+        # Draw player with texture or fallback cyan rect
+        if player_texture is not None:
+            scaled_player = pygame.transform.scale(player_texture, (player_size + 4, player_size + 4))
+            angle_deg = -math.degrees(player_facing_angle)
+            rotated_player = pygame.transform.rotate(scaled_player, angle_deg)
+            player_tex_rect = rotated_player.get_rect(
+                center=(int(player_x + player_size // 2), int(player_y + player_size // 2))
+            )
+            screen.blit(rotated_player, player_tex_rect)
+            # Subtle cyan glow ring around player
+            pygame.draw.circle(
+                screen, (0, 200, 255),
+                (int(player_x + player_size // 2), int(player_y + player_size // 2)),
+                player_size // 2 + 3, 2
+            )
+        else:
+            pygame.draw.rect(screen, (0, 200, 255), player_rect)   # Player (cyan)
 
         # --- HUD: objective status ---
         try:
@@ -284,25 +315,12 @@ while running:
         if hud_text:
             screen.blit(hud_text, (WIDTH - hud_text.get_width() - 15, 10))
 
-        if objective_state == OBJ_PICKED:
-            timer_color = (255, 220, 120)
-            if return_time_left <= RETURN_WARNING_TIME:
-                # Flash red warning when time is about to expire.
-                timer_color = (255, 70, 70) if int(objective_pulse * 6) % 2 == 0 else (255, 180, 180)
-
-            timer_text = hud_font.render(f"Return in: {max(0.0, return_time_left):.1f}s", True, timer_color)
-            screen.blit(timer_text, (15, HEIGHT - timer_text.get_height() - 15))
-
-            if return_time_left <= RETURN_WARNING_TIME:
-                warning_font = pygame.font.Font(None, 34)
-                warning_text = warning_font.render("WARNING: RETURN NOW!", True, (255, 60, 60))
-                screen.blit(warning_text, (WIDTH // 2 - warning_text.get_width() // 2, 45))
-
+        # --- Game over overlay ---
         guard_manager.draw_game_over(screen)
 
-    
+        # --- Level complete overlay ---
         if objective_state == OBJ_COMPLETE:
-       
+            # Dark overlay
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
             screen.blit(overlay, (0, 0))
@@ -316,21 +334,15 @@ while running:
                 font_small = pygame.font.SysFont("arial", 22)
                 font_btn = pygame.font.SysFont("arial", 22)
 
-            is_final_level = current_level >= TOTAL_LEVELS
-
             # Title
-            title_label = "CONGRATULATIONS! YOU WON" if is_final_level else "LEVEL COMPLETE!"
-            complete_text = font_large.render(title_label, True, (0, 255, 150))
+            complete_text = font_large.render("LEVEL COMPLETE!", True, (0, 255, 150))
             complete_rect = complete_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40))
             screen.blit(complete_text, complete_rect)
 
             # Subtitle
-            subtitle_label = (
-                "All levels completed! Great stealth run."
-                if is_final_level
-                else f'"{wall_manager.level_name}" cleared!'
+            sub_text = font_small.render(
+                f'"{wall_manager.level_name}" cleared!', True, (200, 255, 220)
             )
-            sub_text = font_small.render(subtitle_label, True, (200, 255, 220))
             sub_rect = sub_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10))
             screen.blit(sub_text, sub_rect)
 
