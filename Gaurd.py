@@ -3,9 +3,9 @@ import math
 import random
 
 # Guard states
-STATE_PATROL = "patrol"        
-STATE_SUSPICIOUS = "suspicious" 
-STATE_ALERT = "alert"           
+STATE_PATROL = "patrol"         # Green vision - normal patrol
+STATE_SUSPICIOUS = "suspicious" # Yellow vision - player detected, confirming
+STATE_ALERT = "alert"           # Red vision - confirmed, chasing player
 
 
 class Guard:
@@ -18,7 +18,26 @@ class Guard:
       - Red:    player confirmed, guard chases and catches player
     """
 
-    def __init__(self, x, y, patrol_points, vision_radius=120, speed=2, vision_angle=160, wall_manager=None):
+    # Class-level shared texture (set once, used by all guards)
+    _shared_texture = None
+    _texture_cache = {}  # Cache rotated textures
+
+    @classmethod
+    def set_texture(cls, texture_path):
+        """
+        Load a texture image for ALL guards.
+
+        Args:
+            texture_path: Path to the guard sprite image.
+        """
+        try:
+            img = pygame.image.load(texture_path).convert_alpha()
+            cls._shared_texture = img
+            cls._texture_cache.clear()
+        except Exception as e:
+            print(f"Warning: Could not load guard texture '{texture_path}': {e}")
+
+    def __init__(self, x, y, patrol_points, vision_radius=80, speed=2, vision_angle=120, wall_manager=None):
         """
         Args:
             x, y: Starting position of the guard.
@@ -33,7 +52,7 @@ class Guard:
         self.current_patrol_index = 0
         self.vision_radius = vision_radius
         self.speed = speed
-        self.chase_speed = speed * 1.2  # Faster when chasing
+        self.chase_speed = speed * 2.5  # Faster when chasing
 
         # Vision cone settings
         self.vision_angle = vision_angle  # Total cone angle in degrees
@@ -45,11 +64,15 @@ class Guard:
         # Detection state
         self.state = STATE_PATROL
         self.suspicion_timer = 0.0          # Time spent suspicious (seconds)
-        self.suspicion_threshold = 0.1      # Seconds before going alert
+        self.suspicion_threshold = 0.5      # Seconds before going alert
         self.player_was_in_vision = False    # Track if player left vision during suspicion
-        self.last_move_blocked = False
-        self.blocked_time = 0.0
-        self.blocked_threshold = 0.6  # Seconds stuck before switching patrol point
+
+        # Wall-collision tracking (prevents getting stuck)
+        self.wall_hit = False               # Set by _move_toward when clamped by a wall
+        self.stuck_timer = 0.0              # Accumulates when guard can't move
+        self.stuck_threshold = 0.4          # Seconds before forced direction change
+        self.prev_x = float(x)
+        self.prev_y = float(y)
 
         # Guard visual size
         self.width = 20
@@ -112,38 +135,37 @@ class Guard:
 
     def _move_toward(self, tx, ty, spd):
         """Move the guard toward target (tx, ty) at the given speed."""
+        self.wall_hit = False  # Reset each frame
         dx = tx - self.x
         dy = ty - self.y
         dist = math.sqrt(dx * dx + dy * dy)
-
-        if dist <= 0.0001:
-            self.last_move_blocked = False
-            return True
-
         if dist > 0.1:
             # Update facing angle to match movement direction
             self.facing_angle = math.atan2(dy, dx)
         if dist < spd:
             self.x = float(tx)
             self.y = float(ty)
-            self.last_move_blocked = False
             return True  # Arrived
 
-        before_x, before_y = self.x, self.y
-        self.x += (dx / dist) * spd
-        self.y += (dy / dist) * spd
+        intended_x = self.x + (dx / dist) * spd
+        intended_y = self.y + (dy / dist) * spd
+        self.x = intended_x
+        self.y = intended_y
 
         # Wall collision — revert if guard walked into a wall
         if self.wall_manager is not None:
-            old_x_saved = self.x - (dx / dist) * spd
-            old_y_saved = self.y - (dy / dist) * spd
+            old_x_saved = intended_x - (dx / dist) * spd
+            old_y_saved = intended_y - (dy / dist) * spd
             self.x, self.y = self.wall_manager.clamp_entity_movement(
                 old_x_saved, old_y_saved, self.x, self.y,
                 self.width, self.height
             )
-
-        moved_dist = math.sqrt((self.x - before_x) ** 2 + (self.y - before_y) ** 2)
-        self.last_move_blocked = moved_dist < 0.05
+            # Detect if guard was pushed back (= wall collision happened)
+            move_delta = math.sqrt(
+                (self.x - old_x_saved) ** 2 + (self.y - old_y_saved) ** 2
+            )
+            if move_delta < spd * 0.3:  # Barely moved → hit a wall
+                self.wall_hit = True
 
         return False
 
@@ -175,24 +197,24 @@ class Guard:
                 self.current_patrol_index = (
                     (self.current_patrol_index + 1) % len(self.patrol_points)
                 )
-                self.blocked_time = 0.0
-            elif self.last_move_blocked:
-                self.blocked_time += dt
-                if self.blocked_time >= self.blocked_threshold:
-                    # If this point is blocked by walls, continue patrol.
+                self.stuck_timer = 0.0
+
+            # If guard hit a wall, skip to the next patrol point
+            if self.wall_hit:
+                self.stuck_timer += dt
+                if self.stuck_timer >= self.stuck_threshold:
                     self.current_patrol_index = (
                         (self.current_patrol_index + 1) % len(self.patrol_points)
                     )
-                    self.blocked_time = 0.0
+                    self.stuck_timer = 0.0
             else:
-                self.blocked_time = 0.0
+                self.stuck_timer = 0.0
 
             # If player enters vision → become suspicious
             if player_visible:
                 self.state = STATE_SUSPICIOUS
                 self.suspicion_timer = 0.0
                 self.player_was_in_vision = True
-                self.blocked_time = 0.0
 
         # ---- STATE: SUSPICIOUS ----
         elif self.state == STATE_SUSPICIOUS:
@@ -220,7 +242,36 @@ class Guard:
             player_cx = player_rect.centerx
             player_cy = player_rect.centery
             self._move_toward(player_cx, player_cy, self.chase_speed)
-            self.blocked_time = 0.0
+
+            # If guard is stuck on a wall while chasing, try to slide around it
+            if self.wall_hit:
+                self.stuck_timer += dt
+                if self.stuck_timer >= self.stuck_threshold:
+                    # Try perpendicular movement to get around the wall
+                    angle_to_player = math.atan2(
+                        player_cy - self.y, player_cx - self.x
+                    )
+                    # Try ±90° offset to slide around the obstacle
+                    for offset in [math.pi / 2, -math.pi / 2]:
+                        slide_angle = angle_to_player + offset
+                        slide_x = self.x + math.cos(slide_angle) * self.chase_speed * 2
+                        slide_y = self.y + math.sin(slide_angle) * self.chase_speed * 2
+                        old_x, old_y = self.x, self.y
+                        if self.wall_manager is not None:
+                            test_x, test_y = self.wall_manager.clamp_entity_movement(
+                                self.x, self.y, slide_x, slide_y,
+                                self.width, self.height
+                            )
+                            moved = math.sqrt(
+                                (test_x - old_x) ** 2 + (test_y - old_y) ** 2
+                            )
+                            if moved > self.chase_speed * 0.5:
+                                self.x, self.y = test_x, test_y
+                                self.facing_angle = slide_angle
+                                self.stuck_timer = 0.0
+                                break
+            else:
+                self.stuck_timer = 0.0
 
             # Check if guard caught the player (rects overlap)
             if self.get_rect().colliderect(player_rect):
@@ -274,18 +325,39 @@ class Guard:
         # Draw guard body
         body_color = self.body_colors[self.state]
         guard_rect = self.get_rect()
-        pygame.draw.rect(surface, body_color, guard_rect)
-        pygame.draw.rect(surface, (255, 255, 255), guard_rect, 2)  # White border
 
-        # Draw a small "eye" indicator showing state
-        eye_color = (255, 255, 255)
-        pygame.draw.circle(
-            surface, eye_color, (int(self.x), int(self.y - 4)), 3
-        )
-        pupil_color = self.body_colors[self.state]
-        pygame.draw.circle(
-            surface, pupil_color, (int(self.x), int(self.y - 4)), 1
-        )
+        if Guard._shared_texture is not None:
+            # Scale texture to guard size and rotate to face direction
+            tex = Guard._shared_texture
+            scaled = pygame.transform.scale(tex, (self.width + 4, self.height + 4))
+            # Rotate to face the movement direction (pygame rotates counter-clockwise)
+            angle_deg = -math.degrees(self.facing_angle)
+            rotated = pygame.transform.rotate(scaled, angle_deg)
+            # Apply state-colored tint overlay
+            tint_surface = rotated.copy()
+            tint_color = (*body_color, 80)  # Semi-transparent tint
+            tint_overlay = pygame.Surface(tint_surface.get_size(), pygame.SRCALPHA)
+            tint_overlay.fill(tint_color)
+            tint_surface.blit(tint_overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            # Blit centered on guard position
+            tex_rect = rotated.get_rect(center=(int(self.x), int(self.y)))
+            surface.blit(rotated, tex_rect)
+            # State indicator ring
+            pygame.draw.circle(surface, body_color, (int(self.x), int(self.y)), self.width // 2 + 3, 2)
+        else:
+            # Fallback: colored rectangle
+            pygame.draw.rect(surface, body_color, guard_rect)
+            pygame.draw.rect(surface, (255, 255, 255), guard_rect, 2)  # White border
+
+            # Draw a small "eye" indicator showing state
+            eye_color = (255, 255, 255)
+            pygame.draw.circle(
+                surface, eye_color, (int(self.x), int(self.y - 4)), 3
+            )
+            pupil_color = self.body_colors[self.state]
+            pygame.draw.circle(
+                surface, pupil_color, (int(self.x), int(self.y - 4)), 1
+            )
 
     def draw_suspicion_bar(self, surface):
         """Draw a small suspicion progress bar above the guard when suspicious."""
@@ -415,9 +487,9 @@ class GuardManager:
         for i, g in enumerate(self.guards):
             g.state = STATE_PATROL
             g.suspicion_timer = 0.0
+            g.stuck_timer = 0.0
+            g.wall_hit = False
             g.current_patrol_index = 0
-            g.last_move_blocked = False
-            g.blocked_time = 0.0
             if g.patrol_points:
                 g.x = float(g.patrol_points[0][0])
                 g.y = float(g.patrol_points[0][1])
